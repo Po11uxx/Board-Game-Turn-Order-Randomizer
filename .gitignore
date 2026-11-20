@@ -1,0 +1,13 @@
+.DS_Store
+.venv/
+__pycache__/
+.pytest_cache/
+.env
+runs/
+*.egg-info/
+
+# Chinese run guide is local-only.
+/docs/RUN_GUIDE.md
+
+# Local IDE metadata
+.idea/

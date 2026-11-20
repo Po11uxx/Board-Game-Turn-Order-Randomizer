@@ -103,3 +103,7 @@ B. Python/Gradio plus one MCP server with three role tools: less setup, but requ
 C. Custom web frontend plus backend and MCP servers: more styling control but a larger integration and testing surface than this assignment needs initially.
 
 Reference: MCP architecture https://modelcontextprotocol.io/docs/learn/architecture (host/client/server, tools and transports). Specific SDK API/version will be verified during implementation.
+
+## 9. Implementation clarification — 2026-11-19
+
+The user approved one Tester regeneration for Python syntax errors before the first execution. The host supplies the error and rejected tests, retains the original attempt, and stops if the regenerated tests are still invalid. Tests cannot change after execution starts or during Developer repair. This adds a bounded pre-execution generation step without changing the three-role architecture. See DEVELOPMENT.md for implementation and measured validation status.
