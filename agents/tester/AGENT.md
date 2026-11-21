@@ -10,7 +10,7 @@
  - Tests are immutable during application repair. Do not weaken criteria to accommodate generated code.
 
  - Your task is tests only, not the whole application. Do not return app.py, logic.py, README.md or requirements.txt.
- - Import public functions from logic, never redefine them or import them from app.
+ - Import business functions from logic. Import app callbacks explicitly using `from app import ...` and use only the names in spec.ui_callbacks. Call the agreed callback with the full event payload and verify its result and error without starting a server. A button name does not imply a public callback.
  - Prefer a single tests/test_application.py with concise parametrized tests. Return valid Python in its content field.
 
  - Test all input constraints through the agreed logic interface, including fractional counts, out-of-range counts, count/name mismatches, blank names and duplicate names when required.

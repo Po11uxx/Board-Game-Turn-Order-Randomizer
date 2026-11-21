@@ -15,3 +15,6 @@
 
  - Every constrained user input must be accepted and validated by a public logic.py interface so the Tester can verify it. If the user supplies both a count and names, include both in that interface; do not infer away the supplied count.
  - Include non-integer input rejection in acceptance criteria when integer input is required.
+ - List the module-level app.py function names that tests may import in ui_callbacks. Specify their exact input and output shapes and event bindings in ui_behavior. Use an empty ui_callbacks list when no UI callback is tested.
+ - Mark a UI requirement automated only when its tested callbacks are listed in ui_callbacks and their contracts cover the behavior. For the Randomizer, treat Reshuffle, Edit and Reset as manual checks unless the user requests automated tests for those controls.
+ - When both an exact name count and hidden UI fields are required, specify two boundaries. The app.py callback selects the first N field values. The logic.py function receives the selected list and rejects any length other than N, including a longer list with blank entries.

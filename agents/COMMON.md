@@ -12,3 +12,5 @@
 
  - File content fields must contain complete plain source, never Markdown fences, ellipses or pseudocode.
  - The host supplies requirements.txt; never generate it. Installed versions: Python 3.14, Gradio 6.32.0, pytest 9.2.0.
+
+ - For the turn-order randomizer's requested UI test, agree on app.randomize_callback(count, *name_fields) -> tuple[str, str]. The two returned strings are the error message and the numbered result, in that order. The Developer must bind this module-level function to the Randomize button. The Tester should import this callback directly and import other UI callbacks only if the Planner names and specifies them.

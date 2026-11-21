@@ -120,3 +120,29 @@ def test_test_syntax_can_regenerate_once_before_execution(tmp_path):
     assert result['status'] == 'PASSED'
     assert agents.calls.count('generate_tests') == 2
     assert not (Path(result['generated']) / 'tests/test_bad.py').exists()
+
+
+def test_tests_using_undeclared_ui_callbacks_regenerate_before_execution(tmp_path):
+    class CallbackAgents(Agents):
+        async def call(self, role, name, arguments):
+            if name == 'plan_requirements':
+                return {**SPEC, 'ui_callbacks': ['randomize_callback']}
+            if name == 'generate_tests' and arguments['feedback'] is None:
+                return {
+                    **SUITE,
+                    'files': [{
+                        'path': 'tests/test_value.py',
+                        'content': 'from app import randomize_callback, reshuffle_callback\n'
+                                   'def test_value():\n    assert randomize_callback()\n',
+                    }],
+                }
+            if name == 'generate_tests':
+                assert 'Undeclared app callbacks: reshuffle_callback' in arguments['feedback']['error']
+            return await super().call(role, name, arguments)
+
+    runner = Runner(['PASSED'])
+    result = asyncio.run(Pipeline(tmp_path, CallbackAgents(), runner).run(REQ))
+    assert result['status'] == 'PASSED'
+    assert len(runner.test_snapshots) == 1
+    assert b'reshuffle_callback' not in runner.test_snapshots[0]
+    assert (Path(result['generated']).parent / 'rejected_tests.json').exists()

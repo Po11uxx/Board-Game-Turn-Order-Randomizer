@@ -1,7 +1,9 @@
 """Trusted execution controller, copied into the runner image (not generated)."""
+import ast
 import json
 from pathlib import Path
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -18,19 +20,54 @@ def syntax_check(root):
     return None
 
 
+def application_import_error(root, log_path, expected_callbacks=()):
+    probe = (
+        'import app, sys\n'
+        'missing = [name for name in sys.argv[1:] if not callable(getattr(app, name, None))]\n'
+        'if missing:\n'
+        '    raise ImportError("Missing callable app exports required by tests: " + ", ".join(missing))'
+    )
+    with log_path.open('w') as output:
+        try:
+            result = subprocess.run([sys.executable, '-c', probe, *expected_callbacks], cwd=root,
+                                    stdout=output, stderr=subprocess.STDOUT, timeout=15)
+        except subprocess.TimeoutExpired:
+            return ('Importing app.py exceeded 15 seconds. Importing app must return without '
+                    'starting a server or running other blocking work.\n'
+                    + log_path.read_text(errors='replace')[-4000:])
+    if result.returncode != 0:
+        return log_path.read_text(errors='replace')[-4000:]
+    return None
+
+
 def execute():
-    syntax_error = syntax_check(Path('/workspace'))
+    root = Path('/workspace')
+    syntax_error = syntax_check(root)
     if syntax_error:
         return syntax_error
+    callbacks = {
+        alias.name
+        for path in (root / 'tests').glob('test_*.py')
+        for node in ast.walk(ast.parse(path.read_bytes()))
+        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == 'app'
+        for alias in node.names
+    }
+    import_error = application_import_error(root, Path('/tmp/app-import.log'), sorted(callbacks))
+    if import_error is not None:
+        return dict(status='FAILED', detail='Application import check failed before pytest:\n' + import_error)
     report = dict(status='FAILED', detail='', exit_code=None, collected=0, passed=0, failed=0, skipped=0, startup_ok=False)
     with open('/tmp/tests.log', 'w') as output:
-        result = subprocess.run(['python', '-m', 'pytest', 'tests', '-q', '-p', 'no:cacheprovider',
-                                 '--junitxml=/tmp/results.xml'], stdout=output, stderr=subprocess.STDOUT, timeout=60)
+        try:
+            result = subprocess.run(['python', '-m', 'pytest', 'tests', '-q', '-p', 'no:cacheprovider',
+                                     '--junitxml=/tmp/results.xml'], stdout=output, stderr=subprocess.STDOUT, timeout=60)
+        except subprocess.TimeoutExpired:
+            return dict(status='ERROR', detail='pytest exceeded 60 seconds after the application import check passed.\n'
+                        + Path('/tmp/tests.log').read_text(errors='replace')[-12000:])
     report['exit_code'] = result.returncode
     report['detail'] = Path('/tmp/tests.log').read_text(errors='replace')[-12000:]
     if Path('/tmp/results.xml').exists():
-        root = ET.parse('/tmp/results.xml').getroot()
-        suites = [root] if root.tag == 'testsuite' else list(root.iter('testsuite'))
+        xml_root = ET.parse('/tmp/results.xml').getroot()
+        suites = [xml_root] if xml_root.tag == 'testsuite' else list(xml_root.iter('testsuite'))
         report['collected'] = sum(int(s.get('tests', 0)) for s in suites)
         report['failed'] = sum(int(s.get('failures', 0)) + int(s.get('errors', 0)) for s in suites)
         report['skipped'] = sum(int(s.get('skipped', 0)) for s in suites)

@@ -40,6 +40,7 @@ class Spec(Contract):
     requirements: list[Requirement]
     interfaces: list[Interface] = Field(min_length=1)
     ui_behavior: str = Field(min_length=1)
+    ui_callbacks: list[str] = Field(default_factory=list)
     acceptance: list[Acceptance] = Field(min_length=1)
 
     def check_request(self, request: Request):

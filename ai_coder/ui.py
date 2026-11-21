@@ -20,14 +20,14 @@ BUSY = threading.Lock()
 RUNNER = DockerRunner()
 PREVIEW = None
 DESCRIPTION = 'Board Game Turn Order Randomizer: a simple browser application that randomizes the playing order for a group of board-game players.'
-REQUIREMENTS = '''R1: Accept an integer player count from 2 to 20 and exactly that many player names.
+REQUIREMENTS = '''R1: Accept an integer player count from 2 to 20 and exactly that many player names. Show one name field per player. If the UI callback receives hidden fields too, only the first N fields count, including any blanks among those N.
 R2: Trim names; reject blank names, invalid counts, mismatched counts and case-insensitive duplicate names with helpful errors.
 R3: Use a standard uniform shuffle to produce a random permutation; do not use random sort comparisons.
 R4: Display numbered positions 1 through N, include every player exactly once, and do not mutate the original input list.
 R5: Support reshuffling the same players, editing players and resetting all input and output.
 R6: Explain that repeated orders are valid and random ordering does not guarantee balanced game outcomes.
 R7: Work without accounts or a database and do not persist player names by default.
-R8: Deliver runnable source, dependency instructions, a README and executable tests.'''
+R8: Deliver runnable source, dependency instructions, a README and executable tests. Test app.randomize_callback, the actual Randomize button callback, with four names and the hidden fields its Gradio event supplies. Verify that it returns four numbered names without an error.'''
 
 
 def parse_request(description, lines):
@@ -62,12 +62,16 @@ async def generate(description, requirements):
         queue = asyncio.Queue()
         async def work():
             async with AgentClients(RUNS) as agents:
-                return await Pipeline(RUNS, agents, RUNNER, queue.put_nowait).run(request)
+                return await Pipeline(
+                    RUNS, agents, RUNNER,
+                    notify=lambda state: queue.put_nowait((state, gr.skip())),
+                    notify_trace=lambda trace: queue.put_nowait((gr.skip(), trace)),
+                ).run(request)
         task = asyncio.create_task(work())
-        while not task.done():
+        while not task.done() or not queue.empty():
             try:
-                state = await asyncio.wait_for(queue.get(), timeout=0.5)
-                yield (state, gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.update(interactive=False))
+                state, trace = await asyncio.wait_for(queue.get(), timeout=0.5)
+                yield (state, gr.skip(), gr.skip(), gr.skip(), trace, gr.skip(), gr.skip(), gr.skip(), gr.update(interactive=False))
             except TimeoutError:
                 pass
         result = await task
@@ -96,7 +100,7 @@ def display_values(values):
     status, source, tests, evidence, trace, usage, bundle, result, button = values
     def render(value, formatter):
         return value if isinstance(value, dict) and value.get('__type__') == 'update' else formatter(value)
-    return (status_card(status), source, tests, evidence, render(trace, trace_chart), trace,
+    return (render(status, status_card), source, tests, evidence, render(trace, trace_chart), trace,
             render(usage, usage_chart), usage, bundle, result, button)
 
 

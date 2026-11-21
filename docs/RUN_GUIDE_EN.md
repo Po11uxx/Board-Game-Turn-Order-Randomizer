@@ -259,8 +259,9 @@ Do not remove unrelated Docker containers. Separately launched inspection previe
 | Gemini 429 | Check rate limits/quota. Retries are bounded; do not repeatedly click Generate. |
 | Docker daemon unavailable / socket error | Start Docker Desktop, wait for the engine, and run `docker info`. Do not blindly change socket permissions. |
 | Runner image missing | Rebuild `ai-coder-runner:1` from the project root. |
-| Invalid generated test syntax | One pre-execution regeneration is allowed. If it still fails, inspect the saved output and error; do not weaken tests to manufacture a pass. |
-| Test collection error / no tests | Inspect Tests and `result.json`. Zero collected tests cannot count as a pass. |
+| Invalid generated test syntax or undeclared UI imports | One pre-execution regeneration is allowed. The Planner declares which app callbacks the tests may import. Inspect the rejected tests and error if regeneration fails. |
+| Application import failure or timeout | The runner imports the generated app before pytest. An import that raises or exceeds 15 seconds can trigger Developer repair with the same tests. |
+| Test collection error / no tests | Inspect Tests and `result.json`. Test-side collection errors and empty suites stop the run. |
 | Preview does not open | Confirm PASSED, use the latest displayed port, check container state and inspect its logs. |
 | Local port conflict | Stop duplicate instances or launch the UI with `GRADIO_SERVER_PORT=7861 python -m ai_coder.ui`. |
 

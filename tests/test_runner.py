@@ -1,8 +1,9 @@
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 import pytest
 from ai_coder.runner import DockerRunner
-from runtime.entry import syntax_check
+from runtime.entry import application_import_error, syntax_check
 
 
 def test_syntax_errors_are_attributed_without_executing(tmp_path):
@@ -13,6 +14,38 @@ def test_syntax_errors_are_attributed_without_executing(tmp_path):
     (tmp_path / 'tests').mkdir()
     (tmp_path / 'tests/test_x.py').write_text('def broken(:')
     assert syntax_check(tmp_path)['status'] == 'ERROR'
+
+
+def test_application_import_check_does_not_load_pytest_files(tmp_path):
+    app = tmp_path / 'app.py'
+    log = tmp_path / 'app-import.log'
+    test_dir = tmp_path / 'tests'
+    test_dir.mkdir()
+    (test_dir / 'test_invalid.py').write_text('raise RuntimeError("test-side error")')
+    app.write_text('pass')
+    assert application_import_error(tmp_path, log) is None
+
+    app.write_text('raise TypeError("invalid application constructor argument")')
+    assert 'TypeError: invalid application constructor argument' in application_import_error(tmp_path, log)
+
+
+def test_application_import_timeout_reports_blocked_import(monkeypatch, tmp_path):
+    def blocked_import(command, **kwargs):
+        raise subprocess.TimeoutExpired(command, kwargs['timeout'])
+
+    monkeypatch.setattr('runtime.entry.subprocess.run', blocked_import)
+    detail = application_import_error(tmp_path, tmp_path / 'app-import.log')
+    assert 'Importing app.py exceeded 15 seconds' in detail
+    assert 'starting a server' in detail
+
+
+def test_application_import_reports_missing_callback(tmp_path):
+    (tmp_path / 'app.py').write_text('def randomize_callback():\n    return "ok"')
+    log = tmp_path / 'app-import.log'
+    assert application_import_error(tmp_path, log, ['randomize_callback']) is None
+    assert 'Missing callable app exports required by tests: reshuffle_callback' in (
+        application_import_error(tmp_path, log, ['randomize_callback', 'reshuffle_callback'])
+    )
 
 
 def test_container_never_inherits_model_secret(tmp_path):

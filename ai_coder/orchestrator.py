@@ -10,12 +10,13 @@ from ai_coder.models import Spec, Application, TestSuite
 from ai_coder.usage import Ledger
 
 
-class TestSyntaxError(ValueError):
+class TestPreparationError(ValueError):
     pass
 
 
 def validate_tests(suite, spec):
     expected = {r.id for r in spec.requirements}
+    callbacks = set(spec.ui_callbacks)
     if {c.requirement_id for c in suite.coverage} != expected:
         raise ValueError('Test mapping must cover every requirement')
     functions = set()
@@ -23,9 +24,19 @@ def validate_tests(suite, spec):
         try:
             tree = ast.parse(file.content, filename=file.path)
         except SyntaxError as exc:
-            raise TestSyntaxError(f'{file.path}:{exc.lineno}: {exc.msg}') from None
+            raise TestPreparationError(f'{file.path}:{exc.lineno}: {exc.msg}') from None
         functions.update(n.name for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith('test_'))
         for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == 'app':
+                unknown = {name.name for name in node.names} - callbacks
+                if unknown:
+                    raise TestPreparationError(
+                        f'{file.path}:{node.lineno}: Undeclared app callbacks: '
+                        f'{", ".join(sorted(unknown))}. Import only ui_callbacks declared '
+                        f'by the Planner: {", ".join(sorted(callbacks)) or "none"}.')
+            if isinstance(node, ast.Import) and any(name.name == 'app' for name in node.names):
+                raise TestPreparationError(
+                    f'{file.path}:{node.lineno}: Use explicit from app imports for declared UI callbacks.')
             if isinstance(node, ast.Attribute) and node.attr in {'skip', 'skipif', 'xfail'}:
                 raise ValueError('Skipped/xfail tests are not accepted')
     if not functions:
@@ -39,16 +50,22 @@ def validate_tests(suite, spec):
 
 
 class Pipeline:
-    def __init__(self, runs, agents, runner, notify=None):
+    def __init__(self, runs, agents, runner, notify=None, *, notify_trace=None):
         self.runs, self.agents, self.runner = Path(runs), agents, runner
         self.notify = notify or (lambda state: None)
+        self.notify_trace = notify_trace
         self.trace = []
+
+    def record_trace(self):
+        self.workspace.save('trace.json', self.trace)
+        if self.notify_trace is not None:
+            self.notify_trace([event.copy() for event in self.trace])
 
     async def call(self, role, tool, **payload):
         started = time.monotonic()
         event = dict(role=role, tool=tool, status='running', run_id=self.run_id)
         self.trace.append(event)
-        self.workspace.save('trace.json', self.trace)
+        self.record_trace()
         try:
             result = await self.agents.call(role, tool, dict(run_id=self.run_id, **payload))
             event['status'] = 'ok'
@@ -58,7 +75,7 @@ class Pipeline:
             raise
         finally:
             event['duration'] = round(time.monotonic() - started, 3)
-            self.workspace.save('trace.json', self.trace)
+            self.record_trace()
 
     async def run(self, request):
         self.run_id = uuid4().hex
@@ -89,12 +106,12 @@ class Pipeline:
                     try:
                         validate_tests(suite, spec)
                         break
-                    except TestSyntaxError as exc:
+                    except TestPreparationError as exc:
                         if test_attempt == 1:
                             raise
                         feedback = {'error': str(exc), 'previous_tests': suite.model_dump()}
                         ws.save('rejected_tests.json', feedback)
-                        self.notify('Regenerating invalid test syntax (once, before execution)')
+                        self.notify('Regenerating invalid tests (once, before execution)')
                 test_hashes = {p: h for p, h in ws.hashes().items() if p.startswith('tests/')}
                 for round_index in range(3):
                     self.notify(f'Executing tests and startup check (revision {round_index})')

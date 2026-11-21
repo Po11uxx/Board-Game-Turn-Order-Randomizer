@@ -34,8 +34,8 @@ def create_server(role, ledger_path):
         async def generate_tests(run_id: str, request: dict, spec: dict, feedback: dict | None = None) -> dict:
             payload = {'request': Request.model_validate(request).model_dump(),
                        'spec': Spec.model_validate(spec).model_dump(),
-                       'task': 'Generate only executable pytest files importing from logic. No application source.',
-                       'syntax_feedback': feedback}
+                       'task': 'Generate only executable pytest files for the agreed logic and UI callback interfaces. No application source.',
+                       'pre_execution_feedback': feedback}
             return (await adapter.generate(run_id, role, 'generate_tests', payload, TestSuite)).model_dump()
     else:
         raise ValueError('Unknown role')
