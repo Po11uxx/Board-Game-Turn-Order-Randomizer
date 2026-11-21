@@ -146,3 +146,19 @@ def test_tests_using_undeclared_ui_callbacks_regenerate_before_execution(tmp_pat
     assert len(runner.test_snapshots) == 1
     assert b'reshuffle_callback' not in runner.test_snapshots[0]
     assert (Path(result['generated']).parent / 'rejected_tests.json').exists()
+
+
+def test_runner_check_exception_exports_diagnostic_bundle(tmp_path):
+    import json
+    import zipfile
+
+    class BrokenRunner:
+        def check(self):
+            raise OSError('Docker socket unavailable')
+
+    agents = Agents()
+    result = asyncio.run(Pipeline(tmp_path, agents, BrokenRunner()).run(REQ))
+    assert result['status'] == 'ERROR'
+    assert agents.calls == []
+    with zipfile.ZipFile(result['bundle']) as archive:
+        assert 'Docker socket unavailable' in json.loads(archive.read('result.json'))['detail']

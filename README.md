@@ -27,8 +27,8 @@ Open the localhost address printed by Gradio. The runner image has the fixed Gra
 1. Edit the description and numbered `R1: ...` requirements in the English UI.
 2. Generate: Planner defines interfaces and acceptance criteria, Developer creates source, Tester creates tests independently from the implementation.
 3. Invalid generated test syntax can be regenerated once before execution; tests are then locked. The runner executes pytest and checks that the generated application serves HTTP. Application failures can trigger two Developer repairs using unchanged tests.
-4. Inspect source, tests, requirement mappings, MCP calls and Gemini usage. Download the ZIP for that run.
-5. For a passed run, open the isolated preview and manually verify the UI. Stop the preview when finished.
+4. Review the Overview tab for final test counts, startup verification, repair rounds and requirements needing manual review. Open the source, tests, requirement mappings, MCP calls and Gemini usage tabs for details. Download the ZIP for that run.
+5. For a passed run, open the isolated preview and manually verify the UI. The preview link appears only after an HTTP readiness check (up to 30 seconds); startup failures include bounded container logs and trigger container cleanup. Stop the preview when finished.
 
 `PASSED` means collected tests and the startup check passed, not that every requirement or UI interaction has been proven. Coverage mappings are model-authored and should be reviewed. `NOT RUN`, `FAILED` and `ERROR` are retained rather than converted to success. Starting a new generation clears the prior result and stops its preview.
 

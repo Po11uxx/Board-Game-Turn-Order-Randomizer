@@ -61,9 +61,9 @@ def code_excerpt(text):
 
 def status_card(text):
     title, _, detail = text.partition('\n')
-    state = next((s for s in ('PASSED', 'FAILED', 'ERROR') if title.startswith(s)), None)
-    kind = state.lower() if state else ('ready' if title.startswith('Ready') else 'running')
-    icon = {'passed':'✓', 'failed':'✕', 'error':'!', 'ready':'○', 'running':'◷'}[kind]
+    state = next((s for s in ('PASSED', 'FAILED', 'ERROR', 'NOT RUN') if title.startswith(s)), None)
+    kind = state.lower().replace(' ', '-') if state else ('ready' if title.startswith('Ready') else 'running')
+    icon = {'passed':'✓', 'failed':'✕', 'error':'!', 'ready':'○', 'not-run':'○', 'running':'◷'}[kind]
     details = f'<details><summary>Run details</summary><p>{escape(detail)}</p></details>' if detail else ''
     return f'<section class="run-card status-{kind}" role="status"><h3>Run status</h3><p class="status-value">{icon} {escape(title)}</p>{details}</section>'
 
@@ -120,4 +120,23 @@ def usage_chart(usage):
         parts.append('<h3>Known provider tokens by agent</h3>')
         for role, agent in agents.items():
             parts.append(f'<div class="activity-row"><div class="activity-heading"><strong>{escape(role.title())}</strong><span>{token_value(agent, "provider_total_tokens")} tokens · {agent.get("api_calls", 0)} API attempts</span></div>{bar(agent.get("provider_total_tokens", 0), maximum)}</div>')
+    return ''.join(parts)
+
+
+def result_summary(result, evidence):
+    if not result:
+        return '<p>Generate an application to see test results and requirements needing review.</p>'
+    reports = result.get('reports', [])
+    latest = reports[-1] if reports else None
+    repairs = sum(call.get('tool') == 'repair_application' for call in result.get('trace', []))
+    parts = ['<h3>Verification summary</h3><div class="metric-grid">',
+             metric('Tests passed', f"{latest['passed']} / {latest['collected']}" if latest else 'Not run'),
+             metric('Startup check', 'Passed' if latest and latest.get('startup_ok') else 'Not verified'),
+             metric('Repair rounds', repairs), '</div>']
+    manual = [item for item in evidence.get('spec', {}).get('acceptance', []) if item['method'] == 'manual']
+    parts.append('<p>Browser interactions require manual verification. Automated success does not prove every requirement.</p>')
+    if manual:
+        parts.append('<h3>Requirements needing manual review</h3><ul>')
+        parts.extend(f"<li><strong>{escape(item['requirement_id'])}</strong>: {escape(item['criterion'])}</li>" for item in manual)
+        parts.append('</ul>')
     return ''.join(parts)

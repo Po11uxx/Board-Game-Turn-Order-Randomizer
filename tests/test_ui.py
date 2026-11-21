@@ -73,3 +73,17 @@ def test_mcp_activity_streams_before_final_result(monkeypatch, tmp_path):
             await updates.aclose()
 
     asyncio.run(scenario())
+
+
+def test_result_display_enables_preview_only_for_passed_runs():
+    import gradio as gr
+    from ai_coder.ui import display_values
+
+    for status in ('PASSED', 'FAILED', 'ERROR', 'NOT RUN'):
+        result = {'status': status, 'reports': [], 'trace': []}
+        values = display_values((status, '', '', {}, [], {}, None, result, gr.update()))
+        assert values[12]['interactive'] == (status == 'PASSED')
+        assert 'Verification summary' in values[11]
+    cleared = display_values(('Starting', '', '', {}, {}, {}, None, None, gr.update()))
+    assert not cleared[12]['interactive']
+    assert cleared[13] == 'No preview running.'
