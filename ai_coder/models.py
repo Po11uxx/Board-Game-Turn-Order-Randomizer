@@ -1,3 +1,9 @@
+# Project team (name and student ID)
+# 项目组成员（姓名与学号）
+# Ping Lu 40881056
+# xiyao Li 50205246
+# Xinyi Xu 78287646
+
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -15,6 +21,8 @@ class Request(Contract):
     description: str = Field(min_length=1, max_length=12000)
     requirements: list[Requirement] = Field(min_length=1, max_length=30)
 
+    # Reject duplicate requirement IDs so acceptance criteria can refer to each requirement unambiguously.
+    # 拒绝重复的需求编号，确保验收标准能明确对应到每条需求。
     @field_validator('requirements')
     @classmethod
     def unique_ids(cls, items):
@@ -43,6 +51,8 @@ class Spec(Contract):
     ui_callbacks: list[str] = Field(default_factory=list)
     acceptance: list[Acceptance] = Field(min_length=1)
 
+    # Check that the Planner preserved the original requirements and covered each one with acceptance criteria.
+    # 检查 Planner 是否保留原始需求，并为每条需求提供验收标准。
     def check_request(self, request: Request):
         if self.requirements != request.requirements:
             raise ValueError('Planner changed original requirements')
@@ -59,6 +69,8 @@ class File(BaseModel):
 class Application(Contract):
     files: list[File] = Field(min_length=3, max_length=3)
 
+    # Require exactly the three application files the Developer is responsible for producing.
+    # 要求 Developer 交付规定的三个应用文件。
     @model_validator(mode='after')
     def required_files(self):
         if {f.path for f in self.files} != {'app.py', 'logic.py', 'README.md'}:

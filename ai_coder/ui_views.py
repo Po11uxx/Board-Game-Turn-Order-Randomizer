@@ -1,3 +1,9 @@
+# Project team (name and student ID)
+# 项目组成员（姓名与学号）
+# Ping Lu 40881056
+# xiyao Li 50205246
+# Xinyi Xu 78287646
+
 """Small, escaped HTML views; raw evidence remains available in adjacent tabs."""
 from html import escape
 
@@ -55,10 +61,14 @@ CSS = '''
 '''
 
 
+# Return the first 20 lines of source for a compact preview.
+# 取源码的前 20 行，用于简要预览。
 def code_excerpt(text):
     return '\n'.join(text.splitlines()[:20])
 
 
+# Render the run state and escaped details in an accessible HTML status card.
+# 把运行状态和经过转义的详情渲染成支持辅助技术的 HTML 状态卡片。
 def status_card(text):
     title, _, detail = text.partition('\n')
     state = next((s for s in ('PASSED', 'FAILED', 'ERROR') if title.startswith(s)), None)
@@ -68,11 +78,15 @@ def status_card(text):
     return f'<section class="run-card status-{kind}" role="status"><h3>Run status</h3><p class="status-value">{icon} {escape(title)}</p>{details}</section>'
 
 
+# Scale a chart bar against the largest recorded value.
+# 以记录中的最大值为基准计算图表条形的宽度。
 def bar(value, maximum):
     width = 100 * value / maximum if maximum else 0
     return f'<div class="chart-track"><div class="chart-bar" style="width:{width:.2f}%"></div></div>'
 
 
+# Show MCP calls in execution order with their state and available durations.
+# 按执行顺序展示 MCP 调用的状态和已记录的耗时。
 def trace_chart(trace):
     if not trace:
         return '<p>No MCP activity yet. Start a generation to see agent tool calls.</p>'
@@ -86,11 +100,15 @@ def trace_chart(trace):
     return f'<p><strong>{len(trace)} MCP tool calls</strong> · in execution order</p>' + ''.join(rows) + '<p class="chart-note">Bars compare recorded call durations. MCP calls and model API attempts are counted separately.</p>'
 
 
+# Render an escaped metric label, value, and optional note.
+# 转义并展示指标名称、数值和可选说明。
 def metric(label, value):
     main, _, note = str(value).partition(' · ')
     return f'<div class="metric"><span>{escape(label)}</span><strong>{escape(main)}</strong><span class="chart-note">{escape(note)}</span></div>'
 
 
+# Format known token totals and show how many API attempts lack that measurement.
+# 格式化已知 token 总量，并标出有多少次 API 请求缺少该项数据。
 def token_value(summary, key):
     unknown = summary.get(key + '_unknown_calls', 0)
     value = summary.get(key, 0)
@@ -98,6 +116,8 @@ def token_value(summary, key):
     return label + (f' · Not reported by Gemini for {unknown} API attempts' if unknown else '')
 
 
+# Render per-run, cumulative, and per-agent model usage from the recorded data.
+# 展示单次运行、累计和按角色统计的模型用量。
 def usage_chart(usage):
     if not usage:
         return '<p>No usage data yet. Recorded API attempts and token counts appear after a run.</p>'

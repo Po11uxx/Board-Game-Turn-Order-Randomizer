@@ -1,3 +1,9 @@
+# Project team (name and student ID)
+# 项目组成员（姓名与学号）
+# Ping Lu 40881056
+# xiyao Li 50205246
+# Xinyi Xu 78287646
+
 """Trusted execution controller, copied into the runner image (not generated)."""
 import ast
 import json
@@ -10,6 +16,8 @@ import urllib.request
 import xml.etree.ElementTree as ET
 
 
+# Compile the generated application and test files without executing them and classify any syntax error.
+# 编译生成的应用和测试文件以检查语法，并在不执行文件的情况下区分错误来源。
 def syntax_check(root):
     for path in [root / 'app.py', root / 'logic.py', *sorted((root / 'tests').glob('test_*.py'))]:
         try:
@@ -20,6 +28,8 @@ def syntax_check(root):
     return None
 
 
+# Import the app in a time-limited subprocess and report missing callbacks or startup side effects.
+# 在限时子进程中导入应用，报告缺失的回调或导入时启动服务等副作用。
 def application_import_error(root, log_path, expected_callbacks=()):
     probe = (
         'import app, sys\n'
@@ -40,6 +50,8 @@ def application_import_error(root, log_path, expected_callbacks=()):
     return None
 
 
+# Run the application import check, pytest, and a local HTTP startup check inside the container.
+# 在容器内检查应用导入、执行 pytest，并通过本机 HTTP 请求验证应用启动。
 def execute():
     root = Path('/workspace')
     syntax_error = syntax_check(root)

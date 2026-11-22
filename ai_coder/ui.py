@@ -1,3 +1,9 @@
+# Project team (name and student ID)
+# 项目组成员（姓名与学号）
+# Ping Lu 40881056
+# xiyao Li 50205246
+# Xinyi Xu 78287646
+
 import asyncio
 import atexit
 import json
@@ -30,6 +36,8 @@ R7: Work without accounts or a database and do not persist player names by defau
 R8: Deliver runnable source, dependency instructions, a README and executable tests. Test app.randomize_callback, the actual Randomize button callback, with four names and the hidden fields its Gradio event supplies. Verify that it returns four numbered names without an error.'''
 
 
+# Parse the description and numbered requirement lines into the pipeline request model.
+# 将描述和带编号的需求行转换成生成流程使用的请求对象。
 def parse_request(description, lines):
     requirements = []
     for line in lines.splitlines():
@@ -42,10 +50,14 @@ def parse_request(description, lines):
     return Request(description=description, requirements=requirements)
 
 
+# Combine source files for display and label each file with its path relative to the generated workspace.
+# 拼接用于展示的源码，并标出每个文件相对于生成工作区的路径。
 def source_view(root, paths):
     return '\n\n'.join(f'# --- {p.relative_to(root)} ---\n{p.read_text()}' for p in paths)
 
 
+# Serialize UI-triggered runs and stream progress and results while releasing resources on exit.
+# 让界面每次只执行一个生成任务，持续返回进度和结果，并在退出时释放资源。
 async def generate(description, requirements):
     try:
         request = parse_request(description, requirements)
@@ -60,6 +72,8 @@ async def generate(description, requirements):
         stop_preview()
         yield ('Starting', '', '', {}, {}, {}, None, None, gr.update(interactive=False))
         queue = asyncio.Queue()
+        # Keep the role sessions open for the pipeline and queue its progress and MCP trace snapshots.
+        # 在流程中保持角色会话开启，把进度和 MCP 调用记录的副本放入队列。
         async def work():
             async with AgentClients(RUNS) as agents:
                 return await Pipeline(
@@ -88,6 +102,7 @@ async def generate(description, requirements):
                gr.update(interactive=True))
     except Exception as exc:
         # Preserve a usable UI when MCP startup fails before a run is created.
+        # 如果 MCP 在创建运行记录前启动失败，仍让界面保持可用。
         yield (f'ERROR: {str(exc)[:2000]}', '', '', {}, {}, {}, None, None, gr.update(interactive=True))
     finally:
         if task and not task.done():
@@ -96,19 +111,27 @@ async def generate(description, requirements):
         BUSY.release()
 
 
+# Convert pipeline updates into the outputs expected by the graphical and raw-data views.
+# 把流程更新转换成图形视图和原始数据视图需要的输出。
 def display_values(values):
     status, source, tests, evidence, trace, usage, bundle, result, button = values
+    # Pass through Gradio update instructions and format only new values for display.
+    # 直接传递 Gradio 更新指令，只格式化新收到的值。
     def render(value, formatter):
         return value if isinstance(value, dict) and value.get('__type__') == 'update' else formatter(value)
     return (render(status, status_card), source, tests, evidence, render(trace, trace_chart), trace,
             render(usage, usage_chart), usage, bundle, result, button)
 
 
+# Stream presentation-ready updates from the generation callback to the UI.
+# 将格式化后的生成进度和结果逐步发送给界面。
 async def generate_display(description, requirements):
     async for values in generate(description, requirements):
         yield display_values(values)
 
 
+# Stop the active preview container and clear the tracked preview state.
+# 停止当前的预览容器，并清除保存的预览状态。
 def stop_preview():
     global PREVIEW
     if PREVIEW:
@@ -117,6 +140,8 @@ def stop_preview():
     return 'Preview stopped.'
 
 
+# Start a localhost preview for a generation that passed tests and its startup check.
+# 为通过测试和启动检查的应用开启本机预览。
 def start_preview(result):
     global PREVIEW
     if not result or result['status'] != 'PASSED':
@@ -126,6 +151,8 @@ def start_preview(result):
     return f'Open the generated app: [{url}]({url}). Manually verify shuffle, edit and reset; this is separate from automated tests.'
 
 
+# Resize the existing source viewer and update its button without replacing the displayed code.
+# 调整现有源码视图的高度和按钮状态，保留正在展示的代码。
 def toggle_code(expanded, label):
     expanded = not expanded
     return (gr.update(max_lines=100000 if expanded else 20),
@@ -133,6 +160,8 @@ def toggle_code(expanded, label):
 
 
 
+# Build the Gradio inputs, result tabs, and event bindings for generation and preview controls.
+# 创建 Gradio 输入区和结果标签页，并为生成与预览控件绑定事件。
 def build_ui():
     with gr.Blocks(title='AI Coder', analytics_enabled=False) as app:
         with gr.Row(elem_classes='page-header'):

@@ -1,3 +1,9 @@
+# Project team (name and student ID)
+# 项目组成员（姓名与学号）
+# Ping Lu 40881056
+# xiyao Li 50205246
+# Xinyi Xu 78287646
+
 import ast
 import asyncio
 import hashlib
@@ -14,6 +20,8 @@ class TestPreparationError(ValueError):
     pass
 
 
+# Check test syntax, public callback imports, and coverage claims before allowing execution.
+# 在执行前检查测试语法、公开回调的导入和需求覆盖声明。
 def validate_tests(suite, spec):
     expected = {r.id for r in spec.requirements}
     callbacks = set(spec.ui_callbacks)
@@ -50,17 +58,23 @@ def validate_tests(suite, spec):
 
 
 class Pipeline:
+    # Store the injected agents, runner, and optional callbacks for progress and trace updates.
+    # 保存传入的角色客户端、执行器和可选的进度及调用记录回调。
     def __init__(self, runs, agents, runner, notify=None, *, notify_trace=None):
         self.runs, self.agents, self.runner = Path(runs), agents, runner
         self.notify = notify or (lambda state: None)
         self.notify_trace = notify_trace
         self.trace = []
 
+    # Persist the trace and publish a snapshot so earlier UI updates are protected from later mutations.
+    # 保存 MCP 调用记录并发布副本，避免后续修改影响已发出的界面更新。
     def record_trace(self):
         self.workspace.save('trace.json', self.trace)
         if self.notify_trace is not None:
             self.notify_trace([event.copy() for event in self.trace])
 
+    # Route a tool call to its role and record its state and duration even when it fails.
+    # 将工具调用交给对应角色，并记录状态和耗时，包括失败的调用。
     async def call(self, role, tool, **payload):
         started = time.monotonic()
         event = dict(role=role, tool=tool, status='running', run_id=self.run_id)
@@ -77,6 +91,8 @@ class Pipeline:
             event['duration'] = round(time.monotonic() - started, 3)
             self.record_trace()
 
+    # Plan the application, generate and lock its tests, then run bounded repair and export the evidence.
+    # 规划应用、生成并锁定测试，再执行有限轮次的修复并导出验证记录。
     async def run(self, request):
         self.run_id = uuid4().hex
         self.workspace = ws = Workspace(self.runs / self.run_id)
@@ -130,6 +146,7 @@ class Pipeline:
                     ws.write_files(application.files, 'developer')
         except Exception as exc:
             # Pipeline is the UI error boundary: retain evidence and mark ERROR.
+            # 在流程层统一处理传给界面的错误，保留证据并标记为 ERROR。
             status, detail = 'ERROR', str(exc)[:4000]
         ledger = Ledger(self.runs / 'usage.jsonl')
         usage = {'run': ledger.summary(self.run_id), 'cumulative': ledger.summary(),
