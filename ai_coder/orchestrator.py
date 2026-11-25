@@ -100,8 +100,8 @@ class Pipeline:
         ws.save('rules.json', {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
                               for p in (ROOT / 'agents').rglob('*.md')})
         reports, status, detail = [], 'ERROR', ''
-        problem = await asyncio.to_thread(self.runner.check)
         try:
+            problem = await asyncio.to_thread(self.runner.check)
             if problem:
                 status, detail = 'NOT RUN', problem
             else:

@@ -115,13 +115,18 @@ def test_preview_uses_approved_bridge_and_loopback_only(monkeypatch, tmp_path):
     # 记录 Docker 命令参数，并模拟返回预览映射到本机的端口。
     def command(*args, **kwargs):
         calls.append(args)
-        if args[0] == 'network':
-            return SimpleNamespace(returncode=1, stdout='', stderr='')
+        if args[0] == 'inspect':
+            return SimpleNamespace(returncode=0, stdout='true', stderr='')
         return SimpleNamespace(returncode=0, stdout='127.0.0.1:34567\n' if args[0]=='port' else 'container', stderr='')
     monkeypatch.setattr('ai_coder.runner.docker', command)
     runner = DockerRunner()
     monkeypatch.setattr(runner, 'check', lambda: None)
+    from unittest.mock import MagicMock
+    opener = MagicMock()
+    opener.open.return_value.__enter__.return_value.status = 200
+    monkeypatch.setattr('ai_coder.runner.urllib.request.build_opener', lambda *args: opener)
     name, url = runner.preview(tmp_path)
+    opener.open.assert_called_once_with('http://127.0.0.1:34567', timeout=1)
     start = next(c for c in calls if c[0]=='run')
     assert start[start.index('--network')+1] == 'bridge'
     assert start[start.index('-p')+1] == '127.0.0.1::7860'
@@ -132,3 +137,69 @@ def test_preview_uses_approved_bridge_and_loopback_only(monkeypatch, tmp_path):
 # 验证执行器设置了关闭 Gradio 浏览器运行历史的选项。
 def test_runtime_disables_browser_history(tmp_path):
     assert '--env=GRADIO_RUN_HISTORY=False' in DockerRunner.restrictions(tmp_path)
+
+
+def test_preview_failure_includes_logs_and_removes_container(monkeypatch, tmp_path):
+    calls = []
+
+    def command(*args, **kwargs):
+        calls.append(args)
+        output = {'port': '127.0.0.1:34567', 'inspect': 'false', 'logs': 'App startup traceback'}
+        return SimpleNamespace(returncode=0, stdout=output.get(args[0], ''), stderr='')
+
+    monkeypatch.setattr('ai_coder.runner.docker', command)
+    runner = DockerRunner()
+    monkeypatch.setattr(runner, 'check', lambda: None)
+    with pytest.raises(RuntimeError, match='App startup traceback'):
+        runner.preview(tmp_path)
+    assert calls[-1][0:2] == ('rm', '-f')
+
+
+def test_cleanup_timeout_does_not_hide_execution_failure(monkeypatch, tmp_path):
+    def command(*args, **kwargs):
+        if args[0] == 'rm':
+            raise subprocess.TimeoutExpired(args, 15)
+        return SimpleNamespace(returncode=1, stdout='', stderr='Original Docker failure')
+
+    monkeypatch.setattr('ai_coder.runner.docker', command)
+    runner = DockerRunner()
+    monkeypatch.setattr(runner, 'check', lambda: None)
+    assert runner.run(tmp_path).detail == 'Original Docker failure'
+
+
+def test_preview_retries_until_http_ready(monkeypatch, tmp_path):
+    from unittest.mock import MagicMock
+    import urllib.error
+
+    def command(*args, **kwargs):
+        output = {'port': '127.0.0.1:34567', 'inspect': 'true'}
+        return SimpleNamespace(returncode=0, stdout=output.get(args[0], ''), stderr='')
+
+    opener = MagicMock()
+    response = MagicMock()
+    response.__enter__.return_value.status = 200
+    opener.open.side_effect = [urllib.error.URLError('Connection refused'), response]
+    monkeypatch.setattr('ai_coder.runner.docker', command)
+    monkeypatch.setattr('ai_coder.runner.urllib.request.build_opener', lambda *args: opener)
+    monkeypatch.setattr('ai_coder.runner.time.sleep', lambda seconds: None)
+    runner = DockerRunner()
+    monkeypatch.setattr(runner, 'check', lambda: None)
+    assert runner.preview(tmp_path)[1] == 'http://127.0.0.1:34567'
+    assert opener.open.call_count == 2
+
+
+def test_preview_timeout_cleans_up(monkeypatch, tmp_path):
+    calls = []
+
+    def command(*args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=0, stdout='127.0.0.1:34567' if args[0] == 'port' else '', stderr='')
+
+    clock = iter([0, 31])
+    monkeypatch.setattr('ai_coder.runner.time.monotonic', lambda: next(clock))
+    monkeypatch.setattr('ai_coder.runner.docker', command)
+    runner = DockerRunner()
+    monkeypatch.setattr(runner, 'check', lambda: None)
+    with pytest.raises(RuntimeError, match='30 seconds'):
+        runner.preview(tmp_path)
+    assert calls[-1][0:2] == ('rm', '-f')

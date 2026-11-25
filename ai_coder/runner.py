@@ -6,6 +6,9 @@
 
 import shutil
 import subprocess
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from uuid import uuid4
 from ai_coder.models import Execution
@@ -65,7 +68,15 @@ class DockerRunner:
         except subprocess.TimeoutExpired:
             return Execution(status='ERROR', detail='Runner timed out; container terminated')
         finally:
+            self._remove(name)
+
+    @staticmethod
+    def _remove(name):
+        # Cleanup must not replace the original execution/startup failure.
+        try:
             docker('rm', '-f', name)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
 
     # Start a preview container and resolve the port published on localhost.
     # 启动预览容器，并查询映射到本机的端口。
@@ -79,20 +90,39 @@ class DockerRunner:
         # 端口只发布到本机，容器也不会继承后端密钥。
         network = 'bridge'
         name = 'ai-coder-preview-' + uuid4().hex
-        result = docker('run', '-d', '--name', name, '--network', network,
-                        '-p', '127.0.0.1::7860', *self.restrictions(root), IMAGE,
-                        'python', 'app.py')
-        if result.returncode:
-            docker('rm', '-f', name)
-            raise RuntimeError('Preview container could not start')
-        mapping = docker('port', name, '7860/tcp').stdout.strip()
-        if not mapping.startswith('127.0.0.1:'):
-            docker('rm', '-f', name)
-            raise RuntimeError('Preview did not expose a localhost port')
-        return name, 'http://' + mapping
+        try:
+            result = docker('run', '-d', '--name', name, '--network', network,
+                           '-p', '127.0.0.1::7860', *self.restrictions(root), IMAGE,
+                           'python', 'app.py')
+            if result.returncode:
+                raise RuntimeError('Preview container could not start: ' + result.stderr[-2000:])
+            mapping = docker('port', name, '7860/tcp').stdout.strip()
+            if not mapping.startswith('127.0.0.1:') or not mapping.removeprefix('127.0.0.1:').isdigit():
+                raise RuntimeError('Preview did not expose a localhost port')
+            url = 'http://' + mapping
+            # Ignore proxy environment variables for this localhost-only probe.
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                state = docker('inspect', '--format', '{{.State.Running}}', name)
+                if state.returncode or state.stdout.strip() != 'true':
+                    break
+                try:
+                    with opener.open(url, timeout=1) as response:
+                        if response.status == 200:
+                            return name, url
+                except (urllib.error.URLError, TimeoutError, OSError):
+                    pass
+                time.sleep(0.5)
+            logs = docker('logs', '--tail', '40', name)
+            raise RuntimeError('Preview failed to become ready within 30 seconds or exited.\n'
+                               + (logs.stdout + logs.stderr)[-4000:])
+        except BaseException:
+            self._remove(name)
+            raise
 
     # Remove a preview container whose name belongs to this application.
     # 根据容器名称移除本应用创建的预览容器。
     def stop_preview(self, name):
         if name and name.startswith('ai-coder-preview-'):
-            docker('rm', '-f', name)
+            self._remove(name)

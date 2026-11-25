@@ -58,3 +58,21 @@ def test_code_toggle_keeps_one_component_and_does_not_replace_content():
     values = display_values(('Starting', source, source, {}, {}, {}, None, None, gr.update()))
     assert values[1] == source and values[2] == source
     assert display_values(('Planning', *([gr.skip()] * 8)))[1] == gr.skip()
+
+
+def test_overview_shows_final_revision_and_escapes_manual_criteria():
+    from ai_coder.ui_views import result_summary
+    result = {'reports': [{'passed': 2, 'collected': 3, 'startup_ok': False},
+                          {'passed': 3, 'collected': 3, 'startup_ok': True}],
+              'trace': [{'tool': 'repair_application'}]}
+    evidence = {'spec': {'acceptance': [{'requirement_id': 'R1', 'method': 'manual',
+                                        'criterion': '<script>bad</script>'}]}}
+    html = result_summary(result, evidence)
+    assert '3 / 3' in html and '2 / 3' not in html
+    assert 'Repair rounds' in html and 'R1' in html
+    assert '<script>' not in html and '&lt;script&gt;' in html
+    assert 'manual verification' in html
+
+
+def test_not_run_status_is_not_shown_as_running():
+    assert 'status-not-run' in status_card('NOT RUN · run abc\nDocker unavailable')

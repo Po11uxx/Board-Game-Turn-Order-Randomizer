@@ -18,7 +18,7 @@ from ai_coder.gemini import ROOT
 from ai_coder.models import Request, Requirement
 from ai_coder.orchestrator import Pipeline
 from ai_coder.runner import DockerRunner
-from ai_coder.ui_views import CSS, status_card, trace_chart, usage_chart
+from ai_coder.ui_views import CSS, status_card, trace_chart, usage_chart, result_summary
 
 load_dotenv(ROOT / '.env')
 RUNS = ROOT / 'runs'
@@ -120,7 +120,10 @@ def display_values(values):
     def render(value, formatter):
         return value if isinstance(value, dict) and value.get('__type__') == 'update' else formatter(value)
     return (render(status, status_card), source, tests, evidence, render(trace, trace_chart), trace,
-            render(usage, usage_chart), usage, bundle, result, button)
+            render(usage, usage_chart), usage, bundle, result, button,
+            gr.skip() if isinstance(result, dict) and result.get('__type__') == 'update' else result_summary(result, evidence),
+            gr.update(interactive=isinstance(result, dict) and result.get('status') == 'PASSED') if not (isinstance(result, dict) and result.get('__type__') == 'update') else gr.skip(),
+            'No preview running.' if result is None else gr.skip())
 
 
 # Stream presentation-ready updates from the generation callback to the UI.
@@ -178,6 +181,13 @@ def build_ui():
                 status = gr.HTML(status_card('Ready to generate\nDocker runner and Gemini credentials are required.'), elem_classes='status-panel')
                 with gr.Column(elem_classes="results-card"):
                     with gr.Tabs():
+                        with gr.Tab('Overview'):
+                            summary = gr.HTML(result_summary(None, {}))
+                            with gr.Row(elem_classes='preview-actions'):
+                                preview = gr.Button('Open isolated preview', variant='primary', interactive=False, scale=2, min_width=180)
+                                close = gr.Button('Stop preview', scale=1, min_width=120)
+                            preview_link = gr.Markdown('No preview running.')
+                            download = gr.File(label='Download project · check run status before use', interactive=False, elem_classes='project-download')
                         with gr.Tab('Application'):
                             with gr.Group(elem_classes='expandable-code'):
                                 code = gr.Code(label='Application source', language='python', interactive=False, lines=1, max_lines=20)
@@ -185,10 +195,6 @@ def build_ui():
                             source_expanded = gr.State(False)
                             source_toggle.click(lambda expanded: toggle_code(expanded, 'source'), source_expanded,
                                                 [code, source_toggle, source_expanded], api_name=False)
-                            with gr.Row(elem_classes='preview-actions'):
-                                preview = gr.Button('Open isolated preview', variant='primary', scale=2, min_width=180)
-                                close = gr.Button('Stop preview', scale=1, min_width=120)
-                            preview_link = gr.Markdown('No preview running.')
                         with gr.Tab('Tests'):
                             with gr.Group(elem_classes='expandable-code'):
                                 tests = gr.Code(label='Test source', language='python', interactive=False, lines=1, max_lines=20)
@@ -210,10 +216,9 @@ def build_ui():
                                     usage_visual = gr.HTML(usage_chart({}))
                                 with gr.Tab('JSON', id='json'):
                                     usage = gr.JSON(label='Run and cumulative usage (unknown counts are explicit)')
-                    download = gr.File(label='Download project · check run status before use', interactive=False, elem_classes='project-download')
         result = gr.State(None)
         button.click(generate_display, [description, requirements],
-                     [status, code, tests, evidence, trace_visual, trace, usage_visual, usage, download, result, button],
+                     [status, code, tests, evidence, trace_visual, trace, usage_visual, usage, download, result, button, summary, preview, preview_link],
                      api_name='generate',
                      concurrency_limit=1, concurrency_id='generation', trigger_mode='once')
         preview.click(start_preview, result, preview_link, concurrency_limit=1, concurrency_id='preview')
