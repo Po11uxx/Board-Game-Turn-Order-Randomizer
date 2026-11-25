@@ -1,0 +1,18 @@
+[project]
+name = "ai-coder-board-game"
+version = "0.1.0"
+description = "A bounded three-agent Gemini and MCP application generator"
+requires-python = ">=3.14"
+dependencies = [
+  "google-genai==1.75.0",
+  "mcp==1.30.0",
+  "gradio==6.32.0",
+  "pydantic==2.14.4",
+  "python-dotenv==1.2.4",
+]
+
+[project.optional-dependencies]
+test = ["pytest==9.2.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

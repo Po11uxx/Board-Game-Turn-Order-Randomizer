@@ -1,0 +1,93 @@
+# Project team (name and student ID)
+# 项目组成员（姓名与学号）
+# Ping Lu 40881056
+# xiyao Li 50205246
+# Xinyi Xu 78287646
+
+import asyncio
+import json
+import os
+import random
+import time
+from pathlib import Path
+from pydantic import ValidationError
+from google import genai
+from google.genai import errors, types
+
+ROOT = Path(__file__).resolve().parents[1]
+ROLES = ('planner', 'developer', 'tester')
+DEFAULT_MODEL = 'gemini-3.5-flash-lite'
+
+
+# Load the shared and role-specific rules that form Gemini's system instruction.
+# 读取共享规则和角色规则，拼成发给 Gemini 的系统指令。
+def instructions(role):
+    if role not in ROLES:
+        raise ValueError('Unknown agent role')
+    return '\n\n'.join((ROOT / p).read_text() for p in ('agents/COMMON.md', f'agents/{role}/AGENT.md'))
+
+
+class Gemini:
+    # Store the usage ledger, configured model, and optional injected client.
+    # 保存用量日志、配置的模型和可选的外部客户端。
+    def __init__(self, ledger, client=None):
+        self.ledger = ledger
+        self.model = os.environ.get('GEMINI_MODEL', DEFAULT_MODEL)
+        self.client = client
+
+    # Request schema-constrained output and log each API attempt before validating the response.
+    # 按规定的结构请求输出，并在校验响应前记录每次 API 请求。
+    async def generate(self, run_id, role, purpose, payload, schema):
+        if self.client is None:
+            key = os.environ.get('GEMINI_API_KEY')
+            if not key:
+                raise ValueError('GEMINI_API_KEY is not configured in the backend')
+            self.client = genai.Client(api_key=key, http_options=types.HttpOptions(
+                api_version='v1beta', timeout=120000,
+                retry_options=types.HttpRetryOptions(attempts=1)))
+        prompt = json.dumps(payload)
+        invalid_outputs = 0
+        for attempt in range(4):
+            call_id = self.ledger.start(run_id, role, purpose, self.model)
+            started = time.monotonic()
+            try:
+                response = await self.client.aio.models.generate_content(
+                    model=self.model, contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=instructions(role),
+                        response_mime_type='application/json', response_json_schema=schema.model_json_schema(),
+                        temperature=0.2, max_output_tokens=16000))
+            except Exception as exc:
+                # The API boundary owns accounting. Do not log exception bodies/keys.
+                # 在 API 调用处统计用量。异常正文和密钥不写入日志。
+                code = getattr(exc, 'code', None)
+                transient = isinstance(exc, errors.APIError) and code in (429, 500, 502, 503, 504)
+                delay = 5 * 2 ** attempt + random.uniform(0, 1) if transient and attempt < 3 else None
+                self.ledger.finish(call_id, 'error', duration=time.monotonic() - started,
+                                   error_code=code, retry_delay=delay)
+                if delay is not None:
+                    await asyncio.sleep(delay)
+                    continue
+                message = str(getattr(exc, 'message', ''))
+                message = message.replace(os.environ.get('GEMINI_API_KEY') or '<unset>', '[REDACTED]')[:1500]
+                if transient:
+                    raise RuntimeError(f'Gemini temporarily unavailable (HTTP {code}) after {attempt + 1} API attempts. Automatic retries stopped. Wait a few minutes, then select Generate again. No fallback model used.') from None
+                raise RuntimeError(f'Gemini request failed ({type(exc).__name__}, code={code}): {message}; no fallback model used') from None
+            usage = response.usage_metadata
+            self.ledger.finish(call_id, 'ok', usage.model_dump(exclude_none=True) if usage else None,
+                               time.monotonic() - started)
+            # Persist usage even when structured output is incomplete or invalid.
+            # 结构化响应不完整或无效时，仍然保留用量记录。
+            try:
+                return schema.model_validate_json(response.text or '')
+            except ValidationError as exc:
+                invalid_outputs += 1
+                if invalid_outputs >= 2 or attempt == 3:
+                    raise ValueError('Gemini returned invalid structured output; bounded API attempts exhausted') from None
+                prompt += '\nYour previous response did not validate. Return only this role output matching the schema. Errors: ' + json.dumps(exc.errors(include_url=False, include_context=False, include_input=False))[:2000]
+
+    # Release the Gemini asynchronous client if one was created.
+    # 关闭已创建的 Gemini 异步客户端以释放资源。
+    async def close(self):
+        if self.client:
+            await self.client.aio.aclose()
