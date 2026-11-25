@@ -64,7 +64,7 @@ Pending: core tests, actual MCP transport, UI startup, Docker tests/startup/prev
 
 ## Implemented functionality (2026-11-19)
 - Real MCP initialization/discovery and four role-specific tools; shared Gemini adapter loads rule files on each request.
-- Gemini API model is configurable, defaults to user-specified gemini-3.5-flash-lite. SDK automatic retries are limited to one attempt; adapter retries transient API status errors once. Each attempt has a ledger entry. Structured-output validation failures receive at most one tracked retry, then stop the run; no silent result or model fallback.
+- Gemini API model is configurable, defaults to user-specified gemini-3.5-flash-lite. SDK automatic retries are limited to one attempt; adapter allows at most four API attempts with exponential backoff for transient API errors. Each attempt has a ledger entry. Structured-output validation failures receive at most one tracked retry, then stop the run; no silent result or model fallback.
 - Pydantic contracts preserve original requirements. Application files are allowlisted; test mappings must cover all requirements and cannot downgrade automated acceptance criteria. Static tests disallow explicit pytest skip/xfail attributes; runtime skipped or empty suites cannot pass.
 - Two-round repair loop retains tests, report history and artifact hashes. Application syntax failures are repairable; malformed tests stop with ERROR.
 - Docker runner and separate localhost preview implemented. Preflight avoids spending model calls if Docker/image is unavailable. Generated code runs under a non-root account with no keys.
@@ -74,7 +74,7 @@ Pending: core tests, actual MCP transport, UI startup, Docker tests/startup/prev
 ## Deliberate first-version boundaries
 - Fixed Python/Gradio/pytest stack; no language chooser, database, accounts, arbitrary packages, chat, retrieval or autonomous agent debates.
 - User-approved adjustment (2026-11-19): before first execution only, a test syntax error may be sent back to Tester for one regeneration. The rejected version and feedback are retained. After execution begins, tests are immutable. Collection/infrastructure errors still stop the run.
-- Each role invocation has at most two API attempts total, shared between transient-error and malformed-JSON retries. These attempts are separate from the two application repair rounds.
+- Each role invocation has at most four API attempts total; invalid structured output can be corrected only once within that budget. Transient HTTP 429/500/502/503/504 errors wait approximately 5, 10 and 20 seconds (plus up to one second of jitter). These attempts are separate from the two application repair rounds.
 - Requirements-to-test mappings are generated claims, not proof of coverage. Manual UI checks remain NOT RUN in exported reports until separately documented by the group.
 - Preview is a separate process; only the current preview is managed. Abrupt host termination may require removing an ai-coder-preview-* container manually.
 
@@ -141,3 +141,8 @@ Restored the original flexible two-column layout and reserved the former top-rig
 Added PLATFORM_OVERVIEW.md and FAILURE_HANDLING_DECISION.md. The failure decision records evidence, why no separate Retry button was added, the future Tester policy and unchanged locked-test boundary. English documentation is included; the Chinese run guide, .env, local IDE metadata and runs remain excluded.
 
 Publication regression check: 37 tests passed on November 20; one upstream Google GenAI Python 3.14 deprecation warning. No new Gemini generation was performed for this publication.
+
+
+### Failure recovery UI (2026-11-24)
+
+See [Recovery state machine](RECOVERY_STATE_MACHINE.md) for terminal-state actions and provider retry limits. MCP calls allow 540 seconds to cover four 120-second API requests plus bounded backoff. Generation uses hidden Gradio progress overlays; Run status and MCP activity remain the progress indicators.

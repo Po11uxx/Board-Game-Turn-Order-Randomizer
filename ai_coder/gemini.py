@@ -7,6 +7,7 @@
 import asyncio
 import json
 import os
+import random
 import time
 from pathlib import Path
 from pydantic import ValidationError
@@ -45,7 +46,8 @@ class Gemini:
                 api_version='v1beta', timeout=120000,
                 retry_options=types.HttpRetryOptions(attempts=1)))
         prompt = json.dumps(payload)
-        for attempt in range(2):
+        invalid_outputs = 0
+        for attempt in range(4):
             call_id = self.ledger.start(run_id, role, purpose, self.model)
             started = time.monotonic()
             try:
@@ -58,13 +60,18 @@ class Gemini:
             except Exception as exc:
                 # The API boundary owns accounting. Do not log exception bodies/keys.
                 # 在 API 调用处统计用量。异常正文和密钥不写入日志。
-                self.ledger.finish(call_id, 'error', duration=time.monotonic() - started)
-                if isinstance(exc, errors.APIError) and exc.code in (429, 500, 502, 503, 504) and attempt == 0:
-                    await asyncio.sleep(2)
-                    continue
                 code = getattr(exc, 'code', None)
+                transient = isinstance(exc, errors.APIError) and code in (429, 500, 502, 503, 504)
+                delay = 5 * 2 ** attempt + random.uniform(0, 1) if transient and attempt < 3 else None
+                self.ledger.finish(call_id, 'error', duration=time.monotonic() - started,
+                                   error_code=code, retry_delay=delay)
+                if delay is not None:
+                    await asyncio.sleep(delay)
+                    continue
                 message = str(getattr(exc, 'message', ''))
                 message = message.replace(os.environ.get('GEMINI_API_KEY') or '<unset>', '[REDACTED]')[:1500]
+                if transient:
+                    raise RuntimeError(f'Gemini temporarily unavailable (HTTP {code}) after {attempt + 1} API attempts. Automatic retries stopped. Wait a few minutes, then select Generate again. No fallback model used.') from None
                 raise RuntimeError(f'Gemini request failed ({type(exc).__name__}, code={code}): {message}; no fallback model used') from None
             usage = response.usage_metadata
             self.ledger.finish(call_id, 'ok', usage.model_dump(exclude_none=True) if usage else None,
@@ -74,8 +81,9 @@ class Gemini:
             try:
                 return schema.model_validate_json(response.text or '')
             except ValidationError as exc:
-                if attempt == 1:
-                    raise ValueError('Gemini returned invalid structured output after two attempts') from None
+                invalid_outputs += 1
+                if invalid_outputs >= 2 or attempt == 3:
+                    raise ValueError('Gemini returned invalid structured output; bounded API attempts exhausted') from None
                 prompt += '\nYour previous response did not validate. Return only this role output matching the schema. Errors: ' + json.dumps(exc.errors(include_url=False, include_context=False, include_input=False))[:2000]
 
     # Release the Gemini asynchronous client if one was created.

@@ -153,6 +153,17 @@ def result_summary(result, evidence):
              metric('Tests passed', f"{latest['passed']} / {latest['collected']}" if latest else 'Not run'),
              metric('Startup check', 'Passed' if latest and latest.get('startup_ok') else 'Not verified'),
              metric('Repair rounds', repairs), '</div>']
+    status = result.get('status')
+    if status in ('FAILED', 'ERROR', 'NOT RUN'):
+        if status == 'FAILED':
+            guidance = 'Automatic application repair has stopped. Review the failing tests and Run details. Edit inputs if needed, then select Generate again to start a new run. Tests from this run stay unchanged.'
+        elif status == 'NOT RUN':
+            guidance = 'Verification could not start. Check Docker and the runner image using Run details, then select Generate again.'
+        elif 'temporarily unavailable' in result.get('detail', '') or '503' in result.get('detail', ''):
+            guidance = 'Gemini is temporarily unavailable. Automatic retries have stopped. Wait a few minutes, then select Generate again. Changing requirements is not necessary for a service outage.'
+        else:
+            guidance = 'Generation stopped with an error. Review Run details and fix the reported configuration or service issue, then select Generate again.'
+        parts.append('<h3>What to do next</h3><p>' + guidance + '</p><p>Generate again starts a new run and may incur additional API usage. Download diagnostics to retain this result.</p>')
     manual = [item for item in evidence.get('spec', {}).get('acceptance', []) if item['method'] == 'manual']
     parts.append('<p>Browser interactions require manual verification. Automated success does not prove every requirement.</p>')
     if manual:

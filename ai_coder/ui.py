@@ -18,6 +18,7 @@ from ai_coder.gemini import ROOT
 from ai_coder.models import Request, Requirement
 from ai_coder.orchestrator import Pipeline
 from ai_coder.runner import DockerRunner
+from ai_coder.usage import Ledger
 from ai_coder.ui_views import CSS, status_card, trace_chart, usage_chart, result_summary
 
 load_dotenv(ROOT / '.env')
@@ -26,7 +27,8 @@ BUSY = threading.Lock()
 RUNNER = DockerRunner()
 PREVIEW = None
 DESCRIPTION = 'Board Game Turn Order Randomizer: a simple browser application that randomizes the playing order for a group of board-game players.'
-REQUIREMENTS = '''R1: Accept an integer player count from 2 to 20 and exactly that many player names. Show one name field per player. If the UI callback receives hidden fields too, only the first N fields count, including any blanks among those N.
+REQUIREMENTS = '''
+R1: Accept an integer player count from 2 to 20 and exactly that many player names. Strictly enforce the inclusive 2–20 range in the player-count input: an out-of-range value must display a visible warning and prevent turn-order generation; do not silently clamp or replace the value. Show one name field per player. If the UI callback receives hidden fields too, only the first N fields count, including any blanks among those N.
 R2: Trim names; reject blank names, invalid counts, mismatched counts and case-insensitive duplicate names with helpful errors.
 R3: Use a standard uniform shuffle to produce a random permutation; do not use random sort comparisons.
 R4: Display numbered positions 1 through N, include every player exactly once, and do not mutate the original input list.
@@ -82,12 +84,27 @@ async def generate(description, requirements):
                     notify_trace=lambda trace: queue.put_nowait((gr.skip(), trace)),
                 ).run(request)
         task = asyncio.create_task(work())
+        active_run = None
+        last_api_event = None
         while not task.done() or not queue.empty():
             try:
                 state, trace = await asyncio.wait_for(queue.get(), timeout=0.5)
+                if isinstance(trace, list) and trace:
+                    active_run = trace[-1]['run_id']
                 yield (state, gr.skip(), gr.skip(), gr.skip(), trace, gr.skip(), gr.skip(), gr.skip(), gr.update(interactive=False))
             except TimeoutError:
-                pass
+                if active_run:
+                    calls = Ledger(RUNS / 'usage.jsonl').calls(active_run)
+                    latest = calls[-1] if calls else {}
+                    event = (latest.get('call_id'), latest.get('event'))
+                    if event != last_api_event and latest.get('retry_delay') is not None:
+                        last_api_event = event
+                        state = (f"{latest['agent_id'].title()} · waiting to retry Gemini "
+                                 f"(HTTP {latest['error_code']}, {latest['retry_delay']:.0f}s backoff; bounded retries)")
+                        yield (state, *[gr.skip() for _ in range(7)], gr.update(interactive=False))
+                    elif event != last_api_event and latest.get('event') == 'start':
+                        last_api_event = event
+                        yield (f"{latest['agent_id'].title()} · requesting Gemini", *[gr.skip() for _ in range(7)], gr.update(interactive=False))
         result = await task
         root = Path(result['generated'])
         source = source_view(root, sorted(root.glob('*.py')))
@@ -119,11 +136,25 @@ def display_values(values):
     # 直接传递 Gradio 更新指令，只格式化新收到的值。
     def render(value, formatter):
         return value if isinstance(value, dict) and value.get('__type__') == 'update' else formatter(value)
+    streaming = isinstance(result, dict) and result.get('__type__') == 'update'
+    terminal = not streaming and (result is not None or str(status).startswith('ERROR'))
+    passed = terminal and result is not None and result.get('status') == 'PASSED'
+    failed = terminal and not passed
+    overview_result = result if result else ({'status':'ERROR', 'detail':str(status)} if terminal else None)
+    summary = gr.skip() if streaming else (
+        result_summary(overview_result, evidence) if terminal else
+        '<p>Generation in progress. Follow Run status and MCP activity. Temporary Gemini errors are retried automatically, at most four API attempts per agent call.</p>')
     return (render(status, status_card), source, tests, evidence, render(trace, trace_chart), trace,
-            render(usage, usage_chart), usage, bundle, result, button,
-            gr.skip() if isinstance(result, dict) and result.get('__type__') == 'update' else result_summary(result, evidence),
-            gr.update(interactive=isinstance(result, dict) and result.get('status') == 'PASSED') if not (isinstance(result, dict) and result.get('__type__') == 'update') else gr.skip(),
-            'No preview running.' if result is None else gr.skip())
+            render(usage, usage_chart), usage,
+            gr.skip() if streaming else gr.update(value=bundle, visible=bool(bundle), label='Download project' if passed else 'Download diagnostics'),
+            result, gr.update(value='Generate again', interactive=True) if terminal else button,
+            summary, gr.skip() if streaming else gr.update(visible=passed, interactive=passed),
+            gr.skip() if streaming else gr.update(value='No preview running.', visible=passed),
+            gr.skip() if streaming else gr.update(visible=False),
+            gr.skip() if streaming else gr.update(visible=failed),
+            gr.skip() if streaming else gr.update(interactive=terminal),
+            gr.skip() if streaming else gr.update(interactive=terminal))
+
 
 
 # Stream presentation-ready updates from the generation callback to the UI.
@@ -154,6 +185,21 @@ def start_preview(result):
     return f'Open the generated app: [{url}]({url}). Manually verify shuffle, edit and reset; this is separate from automated tests.'
 
 
+def preview_display(result):
+    yield gr.update(value='Starting preview…', visible=True), gr.update(visible=True, interactive=False), gr.update(visible=False)
+    try:
+        message = start_preview(result)
+    except Exception as exc:
+        message = f'Preview could not start: {str(exc)[:2000]}\n\nThe generation result is unchanged. Check Docker, then select Open isolated preview again.'
+        yield gr.update(value=message, visible=True), gr.update(interactive=True), gr.update(visible=False)
+    else:
+        yield gr.update(value=message, visible=True), gr.update(interactive=True), gr.update(visible=True)
+
+
+def stop_preview_display():
+    return stop_preview(), gr.update(visible=False)
+
+
 # Resize the existing source viewer and update its button without replacing the displayed code.
 # 调整现有源码视图的高度和按钮状态，保留正在展示的代码。
 def toggle_code(expanded, label):
@@ -175,7 +221,7 @@ def build_ui():
         with gr.Row(elem_classes='workspace-layout'):
             with gr.Column(scale=2, min_width=340, elem_classes='input-card'):
                 description = gr.Textbox(label='Software description', value=DESCRIPTION, lines=4, elem_classes='request-field')
-                requirements = gr.Textbox(label='Requirements (one R-number per line)', value=REQUIREMENTS, lines=19, elem_classes='request-field')
+                requirements = gr.Textbox(elem_id='requirements-input', label='Requirements (one R-number per line)', value=REQUIREMENTS, lines=19, elem_classes='request-field')
                 button = gr.Button('Generate application', variant='primary')
             with gr.Column(scale=3, min_width=420, elem_classes='output-column'):
                 status = gr.HTML(status_card('Ready to generate\nDocker runner and Gemini credentials are required.'), elem_classes='status-panel')
@@ -184,10 +230,12 @@ def build_ui():
                         with gr.Tab('Overview'):
                             summary = gr.HTML(result_summary(None, {}))
                             with gr.Row(elem_classes='preview-actions'):
-                                preview = gr.Button('Open isolated preview', variant='primary', interactive=False, scale=2, min_width=180)
-                                close = gr.Button('Stop preview', scale=1, min_width=120)
-                            preview_link = gr.Markdown('No preview running.')
-                            download = gr.File(label='Download project · check run status before use', interactive=False, elem_classes='project-download')
+                                preview = gr.Button('Open isolated preview', variant='primary', interactive=False, visible=False, scale=2, min_width=180)
+                                close = gr.Button('Stop preview', visible=False, scale=1, min_width=120)
+                            preview_link = gr.Markdown('No preview running.', visible=False)
+                            edit = gr.Button('Edit inputs', visible=False)
+                            edit.click(fn=None, js="() => {const field=document.querySelector('#requirements-input textarea'); field.scrollIntoView({behavior:'smooth', block:'center'}); field.focus();}", api_name=False)
+                            download = gr.File(label='Download project · check run status before use', interactive=False, visible=False, elem_classes='project-download')
                         with gr.Tab('Application'):
                             with gr.Group(elem_classes='expandable-code'):
                                 code = gr.Code(label='Application source', language='python', interactive=False, lines=1, max_lines=20)
@@ -218,11 +266,11 @@ def build_ui():
                                     usage = gr.JSON(label='Run and cumulative usage (unknown counts are explicit)')
         result = gr.State(None)
         button.click(generate_display, [description, requirements],
-                     [status, code, tests, evidence, trace_visual, trace, usage_visual, usage, download, result, button, summary, preview, preview_link],
-                     api_name='generate',
+                     [status, code, tests, evidence, trace_visual, trace, usage_visual, usage, download, result, button, summary, preview, preview_link, close, edit, description, requirements],
+                     api_name='generate', show_progress='hidden',
                      concurrency_limit=1, concurrency_id='generation', trigger_mode='once')
-        preview.click(start_preview, result, preview_link, concurrency_limit=1, concurrency_id='preview')
-        close.click(stop_preview, outputs=preview_link, concurrency_limit=1, concurrency_id='preview')
+        preview.click(preview_display, result, [preview_link, preview, close], show_progress='hidden', concurrency_limit=1, concurrency_id='preview')
+        close.click(stop_preview_display, outputs=[preview_link, close], show_progress='hidden', concurrency_limit=1, concurrency_id='preview')
     return app
 
 

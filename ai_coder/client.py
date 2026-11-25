@@ -34,7 +34,7 @@ class AgentClients:
                     args=['-m', 'ai_coder.server', '--role', role, '--ledger', str(self.runs / 'usage.jsonl')],
                     env=env, cwd=str(ROOT))
                 read, write = await self.stack.enter_async_context(stdio_client(params))
-                session = await self.stack.enter_async_context(ClientSession(read, write, read_timeout_seconds=timedelta(seconds=300)))
+                session = await self.stack.enter_async_context(ClientSession(read, write, read_timeout_seconds=timedelta(seconds=540)))
                 await session.initialize()
                 self.sessions[role] = session
         except BaseException:

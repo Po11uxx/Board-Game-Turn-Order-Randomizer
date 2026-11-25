@@ -41,9 +41,9 @@ class Ledger:
 
     # Record the outcome, duration, and available token metadata for an API attempt.
     # 保存这次 API 请求的结果、耗时和可用的 token 数据。
-    def finish(self, call_id, status, usage=None, duration=0):
+    def finish(self, call_id, status, usage=None, duration=0, *, error_code=None, retry_delay=None):
         self.append(dict(event='finish', call_id=call_id, status=status,
-                         usage=usage, duration=duration))
+                         usage=usage, duration=duration, error_code=error_code, retry_delay=retry_delay))
 
     # Combine start and finish records while retaining attempts that lack a completion record.
     # 合并请求的开始和结束记录，同时保留没有结束记录的请求。

@@ -108,4 +108,5 @@ def test_result_display_enables_preview_only_for_passed_runs():
         assert 'Verification summary' in values[11]
     cleared = display_values(('Starting', '', '', {}, {}, {}, None, None, gr.update()))
     assert not cleared[12]['interactive']
-    assert cleared[13] == 'No preview running.'
+    assert cleared[13]['value'] == 'No preview running.'
+    assert cleared[13]['visible'] is False
